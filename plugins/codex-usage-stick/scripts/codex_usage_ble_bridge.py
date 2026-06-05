@@ -16,6 +16,7 @@ import contextlib
 import json
 import os
 import select
+import secrets
 import shutil
 import sqlite3
 import subprocess
@@ -40,10 +41,13 @@ DEFAULT_CODEX_HOME = Path.home() / ".codex"
 DEFAULT_CODEX_APP_CLI = Path("/Applications/Codex.app/Contents/Resources/codex")
 STATE_DIR = Path.home() / ".codex" / "codex-usage-bridge"
 DEFAULT_HOOK_APPROVAL_SOCK = STATE_DIR / "approval.sock"
+DEFAULT_HOOK_APPROVAL_ENDPOINT = STATE_DIR / "approval.json"
 SNAPSHOT_CACHE_PATH = STATE_DIR / "last_usage_snapshot.json"
 PRIMARY_RESET_WINDOW_SEC = 5 * 60 * 60
 SECONDARY_RESET_WINDOW_SEC = 7 * 24 * 60 * 60
 APP_SERVER_USAGE_SOURCE = Path("account-rateLimits-read")
+APP_SERVER_STDERR_LOG_INTERVAL_SEC = 60.0
+APP_SERVER_STDERR_LAST_LOG: dict[str, float] = {}
 
 INTERESTING_LINE_MARKERS = (
     "token_count",
@@ -336,6 +340,25 @@ def app_server_usage_snapshot_from_result(
     return snapshot
 
 
+def log_app_server_stderr(args: argparse.Namespace, stderr_text: str) -> None:
+    if not args.verbose or not stderr_text:
+        return
+    noisy = [
+        line
+        for line in stderr_text.splitlines()
+        if "warning: proceeding" not in line.lower()
+    ]
+    if not noisy:
+        return
+    message = " | ".join(noisy[-3:])
+    now = time.monotonic()
+    last = APP_SERVER_STDERR_LAST_LOG.get(message, 0.0)
+    if now - last < APP_SERVER_STDERR_LOG_INTERVAL_SEC:
+        return
+    APP_SERVER_STDERR_LAST_LOG[message] = now
+    print("[usage] app-server stderr: " + message, file=sys.stderr)
+
+
 def read_app_server_usage(args: argparse.Namespace, activity: UsageSnapshot | None) -> UsageSnapshot | None:
     if args.no_appserver_usage:
         return None
@@ -445,14 +468,7 @@ def read_app_server_usage(args: argparse.Namespace, activity: UsageSnapshot | No
             with contextlib.suppress(Exception):
                 if proc.stderr:
                     stderr_text = proc.stderr.read()
-            if args.verbose and stderr_text:
-                noisy = [
-                    line
-                    for line in stderr_text.splitlines()
-                    if "warning: proceeding" not in line.lower()
-                ]
-                if noisy:
-                    print("[usage] app-server stderr: " + " | ".join(noisy[-3:]), file=sys.stderr)
+            log_app_server_stderr(args, stderr_text)
 
     if args.verbose:
         print("[usage] app-server rateLimits/read timed out; falling back to rollout logs", file=sys.stderr)
@@ -785,22 +801,72 @@ class CodexApprovalProxy:
         self.next_prompt_num = 1
         self.enabled = False
         self.ipc_server: asyncio.AbstractServer | None = None
+        self.ipc_token = secrets.token_urlsafe(32)
 
     def has_pending(self) -> bool:
         return bool(self.pending)
 
-    async def start_ipc_server(self) -> None:
-        sock = self.args.hook_approval_sock
-        if not sock:
+    def _write_ipc_endpoint(self, endpoint: dict[str, Any]) -> None:
+        path = self.args.hook_approval_endpoint
+        if not path:
             return
-        sock.parent.mkdir(parents=True, exist_ok=True)
-        with contextlib.suppress(FileNotFoundError):
-            sock.unlink()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        endpoint = {
+            **endpoint,
+            "token": self.ipc_token,
+            "created_at": time.time(),
+        }
+        path.write_text(json.dumps(endpoint, separators=(",", ":")), encoding="utf-8")
+
+    def _remove_ipc_endpoint(self, *, force: bool = False) -> None:
+        path = self.args.hook_approval_endpoint
+        if not path:
+            return
         try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            if force:
+                with contextlib.suppress(FileNotFoundError):
+                    path.unlink()
+            return
+        if force or data.get("token") == self.ipc_token:
+            with contextlib.suppress(FileNotFoundError):
+                path.unlink()
+
+    async def start_ipc_server(self) -> None:
+        self._remove_ipc_endpoint(force=True)
+        try:
+            if os.name == "nt":
+                self.ipc_server = await asyncio.start_server(
+                    self._handle_ipc_client,
+                    host="127.0.0.1",
+                    port=0,
+                )
+                assert self.ipc_server.sockets
+                host, port = self.ipc_server.sockets[0].getsockname()[:2]
+                self._write_ipc_endpoint({
+                    "transport": "tcp",
+                    "host": host,
+                    "port": port,
+                })
+                if self.args.verbose:
+                    print(f"[approval] hook IPC listening at {host}:{port}", file=sys.stderr)
+                return
+
+            sock = self.args.hook_approval_sock
+            if not sock:
+                return
+            sock.parent.mkdir(parents=True, exist_ok=True)
+            with contextlib.suppress(FileNotFoundError):
+                sock.unlink()
             self.ipc_server = await asyncio.start_unix_server(
                 self._handle_ipc_client,
                 path=str(sock),
             )
+            self._write_ipc_endpoint({
+                "transport": "unix",
+                "path": str(sock),
+            })
             with contextlib.suppress(OSError):
                 sock.chmod(0o600)
             if self.args.verbose:
@@ -814,9 +880,10 @@ class CodexApprovalProxy:
             await self.ipc_server.wait_closed()
             self.ipc_server = None
         sock = self.args.hook_approval_sock
-        if sock:
+        if sock and os.name != "nt":
             with contextlib.suppress(FileNotFoundError):
                 sock.unlink()
+        self._remove_ipc_endpoint()
 
     async def _handle_ipc_client(
         self,
@@ -827,7 +894,9 @@ class CodexApprovalProxy:
         try:
             raw = await asyncio.wait_for(reader.readline(), timeout=2.0)
             request = json.loads(raw.decode("utf-8", errors="replace"))
-            if request.get("type") != "permission_request":
+            if request.get("token") != self.ipc_token:
+                response = {"ok": False, "reason": "invalid token"}
+            elif request.get("type") != "permission_request":
                 response = {"ok": False, "reason": "unsupported request"}
             else:
                 timeout = float(request.get("timeout") or self.args.hook_approval_timeout)
@@ -1354,7 +1423,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--hook-approval-sock",
         type=Path,
         default=DEFAULT_HOOK_APPROVAL_SOCK,
-        help="Unix socket used by PermissionRequest hooks to ask the StickS3",
+        help="Unix socket used by PermissionRequest hooks on POSIX",
+    )
+    p.add_argument(
+        "--hook-approval-endpoint",
+        type=Path,
+        default=DEFAULT_HOOK_APPROVAL_ENDPOINT,
+        help="JSON endpoint file used by PermissionRequest hooks",
     )
     p.add_argument(
         "--hook-approval-timeout",
@@ -1389,6 +1464,8 @@ def main() -> int:
         args.approval_sock = args.approval_sock.expanduser()
     if args.hook_approval_sock:
         args.hook_approval_sock = args.hook_approval_sock.expanduser()
+    if args.hook_approval_endpoint:
+        args.hook_approval_endpoint = args.hook_approval_endpoint.expanduser()
     if args.codex_cli:
         args.codex_cli = args.codex_cli.expanduser()
 

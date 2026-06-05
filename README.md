@@ -71,6 +71,12 @@ Install Python BLE support:
 python3 -m pip install bleak
 ```
 
+Windows compatibility note:
+
+```powershell
+python -m pip install bleak
+```
+
 In Codex, open:
 
 ```text
@@ -109,6 +115,10 @@ Help me enable hooks and generate three corresponding hooks: SessionStart, UserP
 
 Codex should create the three hooks that start the BLE bridge.
 
+Windows compatibility note: current versions of this plugin include
+Windows-safe hook commands in `plugins/codex-usage-stick/hooks.json`; after
+updating the marketplace, restart Codex and reapprove hook trust.
+
 CLI fallback:
 
 Make plugin_hooks = true on bash:
@@ -128,6 +138,15 @@ Enable plugin hooks on bash:
 /Applications/Codex.app/Contents/Resources/codex features enable plugin_hooks
 ```
 
+Windows compatibility note:
+
+```powershell
+& "$env:LOCALAPPDATA\OpenAI\Codex\bin\codex.exe" features list | Select-String plugin_hooks
+```
+
+```powershell
+& "$env:LOCALAPPDATA\OpenAI\Codex\bin\codex.exe" features enable plugin_hooks
+```
 
  Confirm the plugin is enabled:
 
@@ -167,18 +186,26 @@ After Codex restarts, make sure Bluetooth is enabled on the computer.
 Send any message in Codex. Codex will try to connect to the hardware and the
 StickS3 should show a pairing code.
 
+Windows compatibility note: the current Windows-friendly firmware uses an open
+NUS BLE link, so it does not show a pairing code. It should show live usage
+after the bridge connects.
+
 CLI fallback:
 
 For the first BLE pairing on a new computer, start with a foreground `busy`
 test so macOS can show the pairing prompt:
 
 ```bash
-python3 ~/.codex/plugins/cache/codex-usage-stick-marketplace/codex-usage-stick/0.4.0/scripts/codex_usage_ble_bridge.py --verbose --state busy
+python3 ~/.codex/plugins/cache/codex-usage-stick-marketplace/codex-usage-stick/<version>/scripts/codex_usage_ble_bridge.py --verbose --state busy
 ```
 
 The StickS3 should show a pairing code. Enter that code on the computer to
 finish the BLE pairing. Once the hardware starts showing usage information,
 stop the foreground test with `Command-C` / `Ctrl-C`.
+
+Windows compatibility note: run the foreground test with `python` if `python3`
+is not available. No pairing prompt is expected with the current open NUS
+firmware.
 
 Then submit any prompt in a project where the plugin hook is trusted. The
 plugin hook should start the BLE bridge automatically.
@@ -349,9 +376,12 @@ Common checks:
 
 ```bash
 python3 plugins/codex-usage-stick/scripts/start_bridge.py --status
+python3 plugins/codex-usage-stick/scripts/doctor.py
 tail -n 20 ~/.codex/codex-usage-bridge/hook.log
 tail -n 40 ~/.codex/codex-usage-bridge/bridge.log
 ```
+
+Windows compatibility note: use `python` instead of `python3` if needed.
 
 If Codex shows a hook warning about async hooks, update to this version. The
 plugin hooks in this repo are synchronous and quickly start a background bridge.
@@ -364,6 +394,10 @@ If first-time Bluetooth pairing fails, or the bridge log shows
 3. Turn Mac Bluetooth off and on again.
 4. Restart the StickS3.
 5. Submit a prompt in Codex to let the plugin reconnect.
+
+Windows compatibility note: the current open NUS firmware does not require
+pairing. If the StickS3 stays on waiting, run the bridge foreground command or
+`python plugins/codex-usage-stick/scripts/doctor.py --scan`.
 
 ## Credits
 

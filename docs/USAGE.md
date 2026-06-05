@@ -12,10 +12,20 @@ installing the Codex plugin, and checking the BLE bridge.
 - Python 3.
 - Python package `bleak`.
 
+Windows compatibility note: Codex Desktop for Windows is supported for the
+plugin and BLE bridge. Use `python` if `python3` is not available, and use the
+Codex CLI at `%LOCALAPPDATA%\OpenAI\Codex\bin\codex.exe`.
+
 Install the Python dependency:
 
 ```bash
 python3 -m pip install bleak
+```
+
+Windows compatibility note:
+
+```powershell
+python -m pip install bleak
 ```
 
 ## 1. Clone The Project
@@ -122,10 +132,22 @@ If the UI flow is unavailable, use:
 /Applications/Codex.app/Contents/Resources/codex plugin marketplace add openelab-commits/codex-desktop-buddy --ref main
 ```
 
+Windows compatibility note:
+
+```powershell
+& "$env:LOCALAPPDATA\OpenAI\Codex\bin\codex.exe" plugin marketplace add openelab-commits/codex-desktop-buddy --ref main
+```
+
 For local development from a cloned repo, use the local folder path:
 
 ```bash
 /Applications/Codex.app/Contents/Resources/codex plugin marketplace add /Users/you/codex-desktop-buddy
+```
+
+Windows local development:
+
+```powershell
+& "$env:LOCALAPPDATA\OpenAI\Codex\bin\codex.exe" plugin marketplace add C:\path\to\codex-desktop-buddy
 ```
 
 ### Enable Plugin Hooks
@@ -136,10 +158,22 @@ Enable plugin hooks:
 /Applications/Codex.app/Contents/Resources/codex features enable plugin_hooks
 ```
 
+Windows compatibility note:
+
+```powershell
+& "$env:LOCALAPPDATA\OpenAI\Codex\bin\codex.exe" features enable plugin_hooks
+```
+
 Check the feature state:
 
 ```bash
 /Applications/Codex.app/Contents/Resources/codex features list | grep -E "hooks|plugin_hooks"
+```
+
+Windows compatibility note:
+
+```powershell
+& "$env:LOCALAPPDATA\OpenAI\Codex\bin\codex.exe" features list | Select-String "hooks|plugin_hooks"
 ```
 
 Expected:
@@ -168,6 +202,10 @@ The hook runs:
 ```text
 plugins/codex-usage-stick/scripts/hook_entry.py
 ```
+
+Windows compatibility note: the hook invokes the same entry point with
+`python`. After updating hook commands, restart Codex and reapprove hook trust
+because the trusted hook hash changes.
 
 It writes a diagnostic record and starts the local background BLE bridge. The
 bridge reads local Codex usage files and sends compact usage numbers to the
@@ -209,6 +247,12 @@ Check status:
 python3 plugins/codex-usage-stick/scripts/start_bridge.py --status
 ```
 
+Windows compatibility note:
+
+```powershell
+python plugins/codex-usage-stick/scripts/start_bridge.py --status
+```
+
 Start or reuse the background bridge:
 
 ```bash
@@ -225,6 +269,18 @@ Stop the background bridge:
 
 ```bash
 python3 plugins/codex-usage-stick/scripts/start_bridge.py --stop
+```
+
+Run diagnostics:
+
+```bash
+python3 plugins/codex-usage-stick/scripts/doctor.py
+```
+
+Windows compatibility note:
+
+```powershell
+python plugins/codex-usage-stick/scripts/doctor.py
 ```
 
 Run the raw bridge:
@@ -256,6 +312,11 @@ Default config:
 ```
 
 Use `address` if macOS keeps showing a stale cached BLE name.
+
+Approval IPC note: `PermissionRequest` approve/deny uses
+`~/.codex/codex-usage-bridge/approval.json` to find the local approval bridge.
+On Windows this points to `127.0.0.1` plus a random token; on POSIX it points
+to a Unix socket.
 
 ## Troubleshooting
 
@@ -312,6 +373,17 @@ reset the macOS BLE pairing record:
 3. Turn Mac Bluetooth off and on again.
 4. Restart the StickS3.
 5. Submit a prompt in Codex to let the plugin reconnect.
+
+Windows compatibility note: the current Windows-friendly firmware uses an open
+NUS BLE link, so no pairing code or Bluetooth pairing prompt is expected.
+
+### Bridge log says `service_tier` is invalid
+
+Some Codex Desktop CLI builds only accept `service_tier = "fast"` or
+`service_tier = "flex"` in `~/.codex/config.toml`. If the bridge log reports
+that `service_tier = "priority"` is invalid, the bridge still falls back to
+Codex defaults, but `doctor.py` will flag it so you can update the local Codex
+config.
 
 ### GIF assets do not appear
 

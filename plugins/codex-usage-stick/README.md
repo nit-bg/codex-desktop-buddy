@@ -27,6 +27,13 @@ The hooks run:
 python3 "$PLUGIN_ROOT/scripts/hook_entry.py"
 ```
 
+Windows compatibility note: Codex Desktop for Windows should install hook
+commands that invoke the same entry point with `python`:
+
+```powershell
+python "$PLUGIN_ROOT/scripts/hook_entry.py"
+```
+
 The startup hooks return quickly: `hook_entry.py` writes a log line and asks
 `start_bridge.py` to start or reuse the background bridge. The
 `PermissionRequest` hook is synchronous and waits briefly for A/B on the
@@ -58,10 +65,22 @@ If this lives in your own fork, use your fork's `owner/repo`.
 /Applications/Codex.app/Contents/Resources/codex plugin marketplace add openelab-commits/codex-desktop-buddy --ref main
 ```
 
+Windows:
+
+```powershell
+& "$env:LOCALAPPDATA\OpenAI\Codex\bin\codex.exe" plugin marketplace add openelab-commits/codex-desktop-buddy --ref main
+```
+
 For local development:
 
 ```bash
 /Applications/Codex.app/Contents/Resources/codex plugin marketplace add /path/to/codex-desktop-buddy
+```
+
+Windows local development:
+
+```powershell
+& "$env:LOCALAPPDATA\OpenAI\Codex\bin\codex.exe" plugin marketplace add C:\path\to\codex-desktop-buddy
 ```
 
 ## Enable Hooks
@@ -70,6 +89,12 @@ Enable plugin hooks:
 
 ```bash
 /Applications/Codex.app/Contents/Resources/codex features enable plugin_hooks
+```
+
+Windows compatibility note:
+
+```powershell
+& "$env:LOCALAPPDATA\OpenAI\Codex\bin\codex.exe" features enable plugin_hooks
 ```
 
 If needed, enable the plugin in `~/.codex/config.toml`:
@@ -88,6 +113,12 @@ when Codex shows it.
 python3 -m pip install bleak
 ```
 
+Windows compatibility note:
+
+```powershell
+python -m pip install bleak
+```
+
 ## Runtime Files
 
 ```text
@@ -95,6 +126,7 @@ python3 -m pip install bleak
 ~/.codex/codex-usage-bridge/hook.log
 ~/.codex/codex-usage-bridge/bridge.log
 ~/.codex/codex-usage-bridge/bridge.pid
+~/.codex/codex-usage-bridge/approval.json
 ```
 
 ## Config
@@ -116,7 +148,9 @@ Default `config.json`:
 Use `address` if macOS BLE name caching makes name scanning unreliable.
 `no_approval_proxy` only disables the older app-server proxy experiment.
 StickS3 approve/deny uses the `PermissionRequest` hook plus the local
-`approval.sock` bridge and works with this value set to `true`.
+approval IPC bridge and works with this value set to `true`. On Windows the
+approval IPC bridge uses `127.0.0.1` plus a random token recorded in
+`approval.json`; on POSIX it uses a Unix socket.
 
 ## Commands
 
@@ -124,6 +158,12 @@ Check status:
 
 ```bash
 python3 plugins/codex-usage-stick/scripts/start_bridge.py --status
+```
+
+Windows compatibility note: use `python` if `python3` is not available.
+
+```powershell
+python plugins/codex-usage-stick/scripts/start_bridge.py --status
 ```
 
 Start:
@@ -150,6 +190,12 @@ Manual hook test:
 python3 plugins/codex-usage-stick/scripts/hook_entry.py --event ManualTest
 ```
 
+Run diagnostics:
+
+```bash
+python plugins/codex-usage-stick/scripts/doctor.py
+```
+
 ## Verify
 
 Make sure Bluetooth is enabled on the computer.
@@ -158,12 +204,16 @@ For the first BLE pairing on a new computer, start with a foreground `busy`
 test so macOS can show the pairing prompt:
 
 ```bash
-python3 ~/.codex/plugins/cache/codex-usage-stick-marketplace/codex-usage-stick/0.4.0/scripts/codex_usage_ble_bridge.py --verbose --state busy
+python3 ~/.codex/plugins/cache/codex-usage-stick-marketplace/codex-usage-stick/<version>/scripts/codex_usage_ble_bridge.py --verbose --state busy
 ```
 
 The StickS3 should show a pairing code. Enter that code on the computer to
 finish the BLE pairing. Once the hardware starts showing usage information,
 stop the foreground test with `Command-C` / `Ctrl-C`.
+
+Windows compatibility note: the current Windows-friendly firmware uses an open
+NUS BLE link, so it does not show a pairing code. Run the same foreground test
+with `python` if `python3` is not available.
 
 Then submit a Codex prompt in a project where the plugin hook is trusted:
 

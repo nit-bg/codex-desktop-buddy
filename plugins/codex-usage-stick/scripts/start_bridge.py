@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import signal
@@ -57,6 +58,27 @@ def load_config() -> dict[str, Any]:
 def process_alive(pid: int) -> bool:
     if pid <= 0:
         return False
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            process_query_limited_information = 0x1000
+            still_active = 259
+
+            handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+            if not handle:
+                # ERROR_ACCESS_DENIED can mean the process exists but is protected.
+                return ctypes.get_last_error() == 5
+            try:
+                exit_code = ctypes.c_ulong()
+                if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                    return True
+                return exit_code.value == still_active
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:
+            return False
     try:
         os.kill(pid, 0)
         return True
@@ -64,6 +86,8 @@ def process_alive(pid: int) -> bool:
         return False
     except PermissionError:
         return True
+    except OSError:
+        return False
 
 
 def running_pid() -> int | None:
@@ -159,14 +183,26 @@ def start_bridge(foreground: bool = False) -> int:
     return 0
 
 
+def terminate_process_tree(pid: int) -> None:
+    if os.name == "nt":
+        with contextlib.suppress(Exception):
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        return
+
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(pid, signal.SIGTERM)
+
+
 def stop_bridge() -> int:
     pid = running_pid()
     if pid is None:
         return 0
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
+    terminate_process_tree(pid)
     try:
         PID_PATH.unlink()
     except OSError:

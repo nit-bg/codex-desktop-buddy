@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/env python3 \"$PLUGIN_ROOT/scripts/hook_entry.py\" --event SessionStart",
+            "command": "python \"$PLUGIN_ROOT/scripts/hook_entry.py\" --event SessionStart",
             "timeout": 8,
             "statusMessage": "Starting Codex Usage Stick BLE bridge"
           }
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/env python3 \"$PLUGIN_ROOT/scripts/hook_entry.py\" --event UserPromptSubmit",
+            "command": "python \"$PLUGIN_ROOT/scripts/hook_entry.py\" --event UserPromptSubmit",
             "timeout": 8,
             "statusMessage": "Starting Codex Usage Stick BLE bridge"
           }
@@ -32,7 +32,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/env python3 \"$PLUGIN_ROOT/scripts/hook_entry.py\" --event PermissionRequest",
+            "command": "python \"$PLUGIN_ROOT/scripts/hook_entry.py\" --event PermissionRequest",
             "timeout": 60,
             "statusMessage": "Waiting for StickS3 approval"
           }

@@ -15,6 +15,7 @@ import select
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ START_BRIDGE = PLUGIN_ROOT / "scripts" / "start_bridge.py"
 STATE_DIR = Path.home() / ".codex" / "codex-usage-bridge"
 HOOK_LOG_PATH = STATE_DIR / "hook.log"
 APPROVAL_SOCK_PATH = STATE_DIR / "approval.sock"
+APPROVAL_ENDPOINT_PATH = STATE_DIR / "approval.json"
 APPROVAL_WAIT_SEC = 45.0
 APPROVAL_CONNECT_SEC = 4.0
 
@@ -33,10 +35,30 @@ def now_iso() -> str:
     return dt.datetime.now(dt.timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
-def read_stdin_text() -> str:
+def read_stdin_text(block: bool = False, timeout: float = 0.5) -> str:
     """Read hook stdin only when data is already available."""
     try:
         if sys.stdin is None or sys.stdin.closed or sys.stdin.isatty():
+            return ""
+        if block:
+            result: list[str] = []
+            error: list[str] = []
+
+            def _reader() -> None:
+                try:
+                    result.append(sys.stdin.read(65536))
+                except Exception as exc:  # pragma: no cover - diagnostic best effort
+                    error.append(f"<stdin unavailable: {exc}>")
+
+            thread = threading.Thread(target=_reader, daemon=True)
+            thread.start()
+            thread.join(timeout)
+            if result:
+                return result[0]
+            if error:
+                return error[0]
+            return ""
+        if os.name == "nt":
             return ""
         ready, _, _ = select.select([sys.stdin], [], [], 0)
         if not ready:
@@ -80,24 +102,71 @@ def permission_output(behavior: str, message: str) -> dict[str, Any]:
     }
 
 
+def load_approval_endpoint() -> dict[str, Any] | None:
+    try:
+        endpoint = json.loads(APPROVAL_ENDPOINT_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        endpoint = None
+
+    if isinstance(endpoint, dict) and endpoint.get("transport"):
+        return endpoint
+
+    if os.name != "nt" and APPROVAL_SOCK_PATH.exists():
+        return {
+            "transport": "unix",
+            "path": str(APPROVAL_SOCK_PATH),
+            "token": None,
+        }
+    return None
+
+
+def send_ipc_request(endpoint: dict[str, Any], request: dict[str, Any], timeout: float) -> bytes:
+    token = endpoint.get("token")
+    if token:
+        request = {**request, "token": token}
+    encoded = (json.dumps(request, separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
+    transport = endpoint.get("transport")
+
+    if transport == "tcp":
+        host = str(endpoint.get("host") or "127.0.0.1")
+        port = int(endpoint.get("port") or 0)
+        if port <= 0:
+            raise OSError("approval TCP endpoint has no port")
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            sock.sendall(encoded)
+            sock.settimeout(APPROVAL_WAIT_SEC + 2.0)
+            return sock.makefile("rb").readline(4096)
+
+    if transport == "unix":
+        if not hasattr(socket, "AF_UNIX"):
+            raise OSError("AF_UNIX is unavailable on this Python build")
+        path = str(endpoint.get("path") or APPROVAL_SOCK_PATH)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            sock.connect(path)
+            sock.sendall(encoded)
+            sock.settimeout(APPROVAL_WAIT_SEC + 2.0)
+            return sock.makefile("rb").readline(4096)
+
+    raise OSError(f"unsupported approval IPC transport: {transport!r}")
+
+
 def request_hardware_permission(hook_payload: dict[str, Any]) -> dict[str, Any] | None:
     request = {
         "type": "permission_request",
         "hook": hook_payload,
         "timeout": APPROVAL_WAIT_SEC,
     }
-    encoded = (json.dumps(request, separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
     connect_deadline = time.monotonic() + APPROVAL_CONNECT_SEC
     last_error = ""
 
     while True:
         try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-                sock.settimeout(max(0.2, min(1.0, connect_deadline - time.monotonic())))
-                sock.connect(str(APPROVAL_SOCK_PATH))
-                sock.sendall(encoded)
-                sock.settimeout(APPROVAL_WAIT_SEC + 2.0)
-                raw = sock.makefile("rb").readline(4096)
+            endpoint = load_approval_endpoint()
+            if not endpoint:
+                raise FileNotFoundError(str(APPROVAL_ENDPOINT_PATH))
+            timeout = max(0.2, min(1.0, connect_deadline - time.monotonic()))
+            raw = send_ipc_request(endpoint, request, timeout)
             if not raw:
                 append_log({"time": now_iso(), "event": "PermissionRequest", "phase": "approval_ipc_empty"})
                 return None
@@ -123,7 +192,7 @@ def request_hardware_permission(hook_payload: dict[str, Any]) -> dict[str, Any] 
                     "time": now_iso(),
                     "event": "PermissionRequest",
                     "phase": "approval_ipc_unavailable",
-                    "socket": str(APPROVAL_SOCK_PATH),
+                    "endpoint": str(APPROVAL_ENDPOINT_PATH),
                     "error": last_error,
                 })
                 return None
@@ -143,7 +212,10 @@ def main() -> int:
     parser.add_argument("--event", default="unknown", help="Hook event name")
     args = parser.parse_args()
 
-    stdin_text = read_stdin_text()
+    stdin_text = read_stdin_text(
+        block=args.event == "PermissionRequest",
+        timeout=2.0 if args.event == "PermissionRequest" else 0.5,
+    )
     append_log({
         "time": now_iso(),
         "event": args.event,

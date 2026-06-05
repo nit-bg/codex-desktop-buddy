@@ -20,12 +20,18 @@ bool bleConnected();
 // link. The NUS characteristics are encrypted-only, so in practice this
 // is always true by the time any data flows; exposed so the status ack
 // can report it to the desktop.
+// Windows compatibility note: the current open NUS firmware variant does not
+// require this to become true for normal data flow.
 bool bleSecure();
 // Non-zero while a 6-digit pairing passkey should be on screen. main.cpp
 // renders it; cleared automatically on auth complete or disconnect.
+// Windows compatibility note: the current open NUS firmware variant does not
+// show a pairing code.
 uint32_t blePasskey();
 // Erase all stored bonds (LTKs) from NVS. Called from the "unpair" cmd
 // and from factory reset.
+// Windows compatibility note: this still clears bonds left by older encrypted
+// firmware variants.
 void bleClearBonds();
 size_t bleAvailable();
 int bleRead();
