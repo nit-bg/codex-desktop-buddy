@@ -1,6 +1,6 @@
 {
   "name": "codex-usage-stick",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Automatically starts a BLE bridge that sends Codex usage to an M5Stack StickS3 display.",
   "author": {
     "name": "Hugo Makerhund"

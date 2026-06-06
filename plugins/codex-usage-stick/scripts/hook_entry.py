@@ -83,6 +83,7 @@ def env_snapshot() -> dict[str, str | None]:
         "PLUGIN_DATA",
         "CLAUDE_PLUGIN_ROOT",
         "CLAUDE_PLUGIN_DATA",
+        "CODEX_USAGE_STICK_HOOK_SOURCE",
         "CODEX_HOME",
         "PWD",
     ]
@@ -222,6 +223,7 @@ def main() -> int:
         "phase": "received",
         "argv": sys.argv,
         "cwd": os.getcwd(),
+        "hook_source": os.environ.get("CODEX_USAGE_STICK_HOOK_SOURCE"),
         "plugin_root": str(PLUGIN_ROOT),
         "env": env_snapshot(),
         "stdin_preview": stdin_text[:4096],

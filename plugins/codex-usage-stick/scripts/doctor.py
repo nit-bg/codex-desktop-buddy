@@ -52,6 +52,16 @@ def check_json(path: Path) -> bool:
         return report(str(path), False, repr(exc))
 
 
+def check_marketplace_json() -> bool:
+    marketplace = REPO_ROOT / ".agents" / "plugins" / "marketplace.json"
+    if marketplace.exists():
+        return check_json(marketplace)
+    cache_root = CODEX_HOME / "plugins" / "cache"
+    if cache_root in PLUGIN_ROOT.parents:
+        return report("marketplace json", True, "not present in installed plugin cache")
+    return report(str(marketplace), False, "missing")
+
+
 def check_python(paths: list[Path]) -> bool:
     ok = True
     for path in paths:
@@ -116,6 +126,30 @@ def check_cached_hooks() -> bool:
     return report("installed hook cache", ok, detail)
 
 
+def check_windows_hook_bootstrap() -> bool:
+    hooks_path = PLUGIN_ROOT / "hooks.json"
+    try:
+        hooks_config = json.loads(hooks_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return report("Windows hook bootstrap", False, repr(exc))
+
+    problems: list[str] = []
+    for event_name, matchers in hooks_config.get("hooks", {}).items():
+        if not isinstance(matchers, list):
+            continue
+        for matcher_index, matcher in enumerate(matchers):
+            for hook_index, hook in enumerate(matcher.get("hooks", [])):
+                command = str(hook.get("commandWindows") or "")
+                label = f"{event_name}:{matcher_index}:{hook_index}"
+                if "$PLUGIN_ROOT" in command:
+                    problems.append(f"{label} still uses $PLUGIN_ROOT")
+                if "runpy.run_path" not in command or "codex-usage-stick" not in command:
+                    problems.append(f"{label} does not use the cache bootstrap")
+
+    detail = "uses cache bootstrap" if not problems else "; ".join(problems)
+    return report("Windows hook bootstrap", not problems, detail)
+
+
 def check_bridge_status() -> bool:
     script = PLUGIN_ROOT / "scripts" / "start_bridge.py"
     try:
@@ -166,7 +200,7 @@ def main() -> int:
     checks = [
         check_json(PLUGIN_ROOT / ".codex-plugin" / "plugin.json"),
         check_json(PLUGIN_ROOT / "hooks.json"),
-        check_json(REPO_ROOT / ".agents" / "plugins" / "marketplace.json"),
+        check_marketplace_json(),
         check_python([
             PLUGIN_ROOT / "scripts" / "start_bridge.py",
             PLUGIN_ROOT / "scripts" / "hook_entry.py",
@@ -174,6 +208,7 @@ def main() -> int:
         ]),
         check_bleak(),
         check_config(),
+        check_windows_hook_bootstrap(),
         check_cached_hooks(),
         check_bridge_status(),
     ]

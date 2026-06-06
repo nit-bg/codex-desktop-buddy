@@ -6,6 +6,7 @@ StickS3 running the matching Codex Usage Stick firmware.
 The plugin is local-first:
 
 - It reads local Codex usage files.
+- It summarizes recent local Codex session messages for the StickS3 chat screen.
 - It starts one background bridge process.
 - It sends compact usage packets over BLE.
 - It writes diagnostics under `~/.codex/codex-usage-bridge/`.
@@ -28,16 +29,27 @@ python3 "$PLUGIN_ROOT/scripts/hook_entry.py"
 ```
 
 Windows compatibility note: Codex Desktop for Windows should install hook
-commands that invoke the same entry point with `python`:
+commands that invoke the same entry point through a cache bootstrap:
 
 ```powershell
-python "$PLUGIN_ROOT/scripts/hook_entry.py"
+py -3 -c "..."
 ```
+
+The Windows bootstrap does not rely on `$PLUGIN_ROOT`, because Codex Desktop
+for Windows may not expand that placeholder for plugin-bundled hooks. Instead,
+it locates the newest installed
+`~/.codex/plugins/cache/*/codex-usage-stick/*/scripts/hook_entry.py` and runs
+it with `py -3`. Hook diagnostics include
+`CODEX_USAGE_STICK_HOOK_SOURCE=plugin-windows-bootstrap` when this path is used.
 
 The startup hooks return quickly: `hook_entry.py` writes a log line and asks
 `start_bridge.py` to start or reuse the background bridge. The
 `PermissionRequest` hook is synchronous and waits briefly for A/B on the
 StickS3 before falling back to Codex's normal approval UI.
+
+The bridge packets include compact usage fields plus recent local transcript
+summaries in `msg` and `entries`. The firmware shows those summaries on the
+`CODEX CHAT` screen; press A to reach it and B to scroll.
 
 ## Install From Codex UI
 

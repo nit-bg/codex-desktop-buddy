@@ -62,7 +62,7 @@ bool    btnBHandled     = false;
 uint32_t btnADownMs     = 0;
 uint32_t btnBDownMs     = 0;
 
-enum DisplayMode { DISP_NORMAL, DISP_PET, DISP_INFO, DISP_COUNT };
+enum DisplayMode { DISP_NORMAL, DISP_TRANSCRIPT, DISP_PET, DISP_INFO, DISP_COUNT };
 uint8_t displayMode = DISP_NORMAL;
 uint8_t infoPage = 0;
 uint8_t petPage = 0;
@@ -107,6 +107,9 @@ uint32_t napStartMs = 0;
 uint32_t promptArrivedMs = 0;
 const uint32_t HOUR_SEC = 3600;
 const uint32_t DAY_SEC = 86400;
+const int TRANSCRIPT_PET_TOP = 24;
+const int TRANSCRIPT_PET_H = 78;
+const int TRANSCRIPT_TEXT_TOP = 112;
 
 // Face-down = Z-axis dominant and negative. Debounced so a toss doesn't count.
 static bool isFaceDown() {
@@ -157,6 +160,18 @@ void applyDisplayMode() {
   // clear is cheap and guarantees no leftovers between modes.
   spr.fillSprite(0x0000);
   characterInvalidate();  // redraws character on next tick (text mode path)
+}
+
+static void nextDisplayMode() {
+  if (displayMode == DISP_NORMAL) {
+    displayMode = DISP_TRANSCRIPT;
+    msgScroll = 0;
+  } else if (displayMode == DISP_TRANSCRIPT) {
+    displayMode = DISP_INFO;
+  } else {
+    displayMode = DISP_NORMAL;
+  }
+  applyDisplayMode();
 }
 
 const char* menuItems[] = { "settings", "turn off", "help", "about", "demo", "close" };
@@ -864,6 +879,8 @@ void drawInfo() {
 
 // Greedy word-wrap into fixed-width rows. Continuation rows get a leading
 // space. Returns number of rows written.
+static void drawApproval();
+
 static uint8_t wrapInto(const char* in, char out[][24], uint8_t maxRows, uint8_t width) {
   uint8_t row = 0, col = 0;
   const char* p = in;
@@ -894,6 +911,184 @@ static uint8_t wrapInto(const char* in, char out[][24], uint8_t maxRows, uint8_t
   }
   if (col > 0 && row < maxRows) { out[row][col] = 0; row++; }
   return row;
+}
+
+static uint8_t buildTranscriptRows(char out[][24], uint8_t srcOf[], uint8_t maxRows, uint8_t width) {
+  uint8_t nDisp = 0;
+  if (tama.nLines == 0) {
+    const char* fallback = tama.msg[0] ? tama.msg : "No Codex messages";
+    uint8_t got = wrapInto(fallback, out, maxRows, width);
+    for (uint8_t j = 0; j < got; j++) srcOf[j] = 0;
+    return got;
+  }
+
+  for (uint8_t i = 0; i < tama.nLines && nDisp < maxRows; i++) {
+    uint8_t got = wrapInto(tama.lines[i], &out[nDisp], maxRows - nDisp, width);
+    for (uint8_t j = 0; j < got; j++) srcOf[nDisp + j] = i;
+    nDisp += got;
+  }
+  return nDisp;
+}
+
+static uint8_t transcriptMaxBack(uint8_t width, uint8_t visibleRows) {
+  static char rows[40][24];
+  static uint8_t srcOf[40];
+  uint8_t n = buildTranscriptRows(rows, srcOf, 40, width);
+  return n > visibleRows ? n - visibleRows : 0;
+}
+
+static void transcriptAdvanceScroll(uint8_t width, uint8_t visibleRows) {
+  uint8_t maxBack = transcriptMaxBack(width, visibleRows);
+  msgScroll = (msgScroll >= maxBack) ? 0 : msgScroll + 1;
+}
+
+static void drawTranscriptTitleOn(lgfx::v1::LGFXBase* dst, int x, int y, int w,
+                                  bool live, const Palette& p) {
+  dst->setTextSize(1);
+  dst->setTextDatum(TL_DATUM);
+  dst->setTextColor(p.textDim, p.bg);
+  dst->drawString("CODEX CHAT", x, y);
+  dst->setTextDatum(TR_DATUM);
+  dst->setTextColor(live ? GREEN : HOT, p.bg);
+  dst->drawString(live ? "LIVE" : "WAIT", x + w, y);
+  dst->setTextDatum(TL_DATUM);
+}
+
+static void drawTranscriptRowsOn(lgfx::v1::LGFXBase* dst, int x, int y,
+                                 uint8_t visibleRows, int lineHeight,
+                                 uint8_t wrapWidth, const Palette& p) {
+  static char rows[40][24];
+  static uint8_t srcOf[40];
+  uint8_t nDisp = buildTranscriptRows(rows, srcOf, 40, wrapWidth);
+  uint8_t maxBack = nDisp > visibleRows ? nDisp - visibleRows : 0;
+  if (msgScroll > maxBack) msgScroll = maxBack;
+
+  int end = (int)nDisp - msgScroll;
+  int start = end - visibleRows; if (start < 0) start = 0;
+  uint8_t newest = tama.nLines > 0 ? tama.nLines - 1 : 0;
+  dst->setTextSize(1);
+  dst->setTextDatum(TL_DATUM);
+  for (int i = 0; start + i < end; i++) {
+    uint8_t row = start + i;
+    bool fresh = (srcOf[row] == newest) && (msgScroll == 0);
+    dst->setTextColor(fresh ? p.text : p.textDim, p.bg);
+    dst->drawString(rows[row], x, y + i * lineHeight);
+  }
+  if (msgScroll > 0) {
+    dst->setTextColor(p.body, p.bg);
+    dst->setTextDatum(TR_DATUM);
+    char b[8]; snprintf(b, sizeof(b), "-%u", msgScroll);
+    dst->drawString(b, x + wrapWidth * 6, y + (visibleRows - 1) * lineHeight);
+    dst->setTextDatum(TL_DATUM);
+  }
+}
+
+static void drawTranscriptScreen() {
+  if (tama.promptId[0]) { drawApproval(); return; }
+  const Palette& p = characterPalette();
+  bool live = tama.connected;
+
+  if (tama.lineGen != lastLineGen) { msgScroll = 0; lastLineGen = tama.lineGen; wake(); }
+  if (usageFullPushNeeded) spr.fillSprite(p.bg);
+
+  if (characterLoaded()) {
+    characterSetState(activeState);
+    characterRenderTo(&spr, CX, TRANSCRIPT_PET_TOP + TRANSCRIPT_PET_H / 2 + 6,
+                      68, 0, TRANSCRIPT_PET_TOP, W, TRANSCRIPT_PET_TOP + TRANSCRIPT_PET_H);
+  } else {
+    spr.fillRect(0, TRANSCRIPT_PET_TOP, W, TRANSCRIPT_PET_H, p.bg);
+    buddySetPeek(true);
+    buddyRenderTo(&spr, activeState);
+  }
+
+  spr.fillRect(0, 0, W, TRANSCRIPT_PET_TOP, p.bg);
+  drawTranscriptTitleOn(&spr, 8, 8, W - 16, live, p);
+
+  spr.fillRect(0, TRANSCRIPT_TEXT_TOP - 4, W, H - TRANSCRIPT_TEXT_TOP + 4, p.bg);
+  spr.drawFastHLine(8, TRANSCRIPT_TEXT_TOP - 7, W - 16, p.textDim);
+  drawTranscriptRowsOn(&spr, 4, TRANSCRIPT_TEXT_TOP, 11, 11, 21, p);
+  usageFullPushNeeded = false;
+}
+
+static void drawTranscriptLandscape() {
+  if (tama.promptId[0]) { drawApproval(); return; }
+  const Palette& p = characterPalette();
+  bool live = tama.connected;
+
+  M5.Lcd.setRotation(clockOrient);
+  const int lw = M5.Lcd.width();
+  const int lh = M5.Lcd.height();
+  const int leftW = 104;
+  const int rightX = leftW + 8;
+  const int rightW = lw - rightX - 8;
+
+  bool repaint = paintedOrient != clockOrient || usageFullPushNeeded;
+  if (repaint) {
+    M5.Lcd.fillScreen(p.bg);
+    paintedOrient = clockOrient;
+  }
+  if (tama.lineGen != lastLineGen) { msgScroll = 0; lastLineGen = tama.lineGen; wake(); repaint = true; }
+
+  static uint8_t cachedOrient = 0;
+  static uint16_t cachedLineGen = 0xFFFF;
+  static uint8_t cachedScroll = 0xFF;
+  static bool cachedLive = false;
+  static uint8_t cachedPetState = 0xFF;
+  static int cachedPetW = 0;
+  static int cachedPetH = 0;
+  bool panelChanged = repaint
+                   || cachedOrient != clockOrient
+                   || cachedLineGen != tama.lineGen
+                   || cachedScroll != msgScroll
+                   || cachedLive != live;
+
+  if (characterLoaded()) {
+    bool canvasChanged = false;
+    if (cachedPetW != leftW || cachedPetH != lh) {
+      usagePetSpr.deleteSprite();
+      usagePetSpr.setColorDepth(16);
+      usagePetSpr.createSprite(leftW, lh);
+      cachedPetW = usagePetSpr.width();
+      cachedPetH = usagePetSpr.height();
+      canvasChanged = true;
+    }
+
+    bool stateChanged = cachedPetState != activeState;
+    if (canvasChanged || stateChanged) usagePetSpr.fillSprite(p.bg);
+
+    characterSetState(activeState);
+    bool frameDrawn = false;
+    if (cachedPetW == leftW && cachedPetH == lh) {
+      frameDrawn = characterRenderTo(&usagePetSpr, leftW / 2, lh / 2 + 4,
+                                     58, 0, 0, leftW, lh);
+      if (repaint || canvasChanged || stateChanged || frameDrawn) {
+        usagePetSpr.pushSprite(0, 0);
+      }
+    } else {
+      characterRenderTo(&M5.Lcd, leftW / 2, lh / 2 + 4, 58, 0, 0, leftW, lh);
+    }
+    cachedPetState = activeState;
+  } else {
+    cachedPetState = 0xFF;
+    M5.Lcd.fillRect(0, 0, leftW, lh, p.bg);
+    buddySetPeek(true);
+    buddyRenderTo(&M5.Lcd, activeState);
+  }
+
+  if (panelChanged) {
+    M5.Lcd.fillRect(rightX - 2, 0, rightW + 4, lh, p.bg);
+    drawTranscriptTitleOn(&M5.Lcd, rightX, 7, rightW, live, p);
+    M5.Lcd.drawFastHLine(rightX, 22, rightW, p.textDim);
+    drawTranscriptRowsOn(&M5.Lcd, rightX, 30, 9, 11, 20, p);
+    cachedOrient = clockOrient;
+    cachedLineGen = tama.lineGen;
+    cachedScroll = msgScroll;
+    cachedLive = live;
+  }
+
+  M5.Lcd.setTextDatum(TL_DATUM);
+  M5.Lcd.setRotation(0);
+  usageFullPushNeeded = false;
 }
 
 static void drawApproval() {
@@ -1567,8 +1762,7 @@ void loop() {
         menuSel = (menuSel + 1) % MENU_N;
       } else {
         beep(1800, 30);
-        displayMode = (displayMode == DISP_NORMAL) ? DISP_INFO : DISP_NORMAL;
-        applyDisplayMode();
+        nextDisplayMode();
       }
     }
     btnALong = false;
@@ -1605,6 +1799,9 @@ void loop() {
       beep(2400, 30);
       petPage = (petPage + 1) % PET_PAGES;
       applyDisplayMode();
+    } else if (displayMode == DISP_TRANSCRIPT) {
+      beep(2400, 30);
+      transcriptAdvanceScroll(21, 11);
     } else {
       beep(2400, 30);
       triggerOneShot(P_HEART, 2000);
@@ -1637,15 +1834,25 @@ void loop() {
                               && !resetOpen
                               && !settingsOpen
                               && !menuOpen;
-  if (clocking || batteryLandscapeCandidate || usageLandscapeCandidate) clockUpdateOrient();
+  bool transcriptLandscapeCandidate = displayMode == DISP_TRANSCRIPT
+                                   && !inPrompt
+                                   && !pk
+                                   && !screenOff
+                                   && !napping
+                                   && !resetOpen
+                                   && !settingsOpen
+                                   && !menuOpen;
+  if (clocking || batteryLandscapeCandidate || usageLandscapeCandidate || transcriptLandscapeCandidate) clockUpdateOrient();
   else { clockOrient = 0; orientFrames = 0; paintedOrient = 0; }
   bool landscapeClock = (clocking || batteryLandscapeCandidate) && clockOrient != 0;
   bool landscapeUsage = usageLandscapeCandidate && clockOrient != 0 && !landscapeClock;
+  bool landscapeTranscript = transcriptLandscapeCandidate && clockOrient != 0 && !landscapeClock;
 
   static bool wasClocking = false;
   static bool wasLandscape = false;
   static bool wasLandscapeUsage = false;
-  if (clocking != wasClocking || landscapeClock != wasLandscape || landscapeUsage != wasLandscapeUsage) {
+  static bool wasLandscapeTranscript = false;
+  if (clocking != wasClocking || landscapeClock != wasLandscape || landscapeUsage != wasLandscapeUsage || landscapeTranscript != wasLandscapeTranscript) {
     if (clocking && !landscapeClock) {
       characterSetPeekWindow(25, 80);
       characterSetPeekBottomAlign(true);
@@ -1658,6 +1865,7 @@ void loop() {
     wasClocking = clocking;
     wasLandscape = landscapeClock;
     wasLandscapeUsage = landscapeUsage;
+    wasLandscapeTranscript = landscapeTranscript;
   }
   if (clocking || landscapeClock) {
     uint8_t dow = clockDow();
@@ -1674,11 +1882,13 @@ void loop() {
     else                             activeState = (now/10000 % 5 == 0) ? P_SLEEP : P_IDLE;
   }
 
-  if (napping || screenOff || landscapeClock || landscapeUsage) {
+  if (napping || screenOff || landscapeClock || landscapeUsage || landscapeTranscript) {
     // Skip sprite render while direct-to-LCD landscape screens are active.
-    if (!landscapeUsage) usageFullPushNeeded = true;
+    if (!landscapeUsage && !landscapeTranscript) usageFullPushNeeded = true;
   } else if (displayMode == DISP_NORMAL) {
     drawUsageDashboard();
+  } else if (displayMode == DISP_TRANSCRIPT) {
+    drawTranscriptScreen();
   } else if (buddyMode) {
     buddyTick(activeState);
   } else if (characterLoaded()) {
@@ -1710,6 +1920,8 @@ void loop() {
     drawClock();
   } else if (landscapeUsage) {
     drawUsageDashboardLandscape();
+  } else if (landscapeTranscript) {
+    drawTranscriptLandscape();
   } else if (!napping && !screenOff) {
     if (blePasskey()) drawPasskey();
     else if (clocking) drawClock();

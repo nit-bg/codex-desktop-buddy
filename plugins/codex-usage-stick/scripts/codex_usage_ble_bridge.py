@@ -22,7 +22,7 @@ import sqlite3
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -64,6 +64,15 @@ INTERESTING_LINE_MARKERS = (
     "traceback",
     "timed out",
 )
+
+TRANSCRIPT_EVENT_TYPES = {
+    "agent_message",
+    "custom_tool_call",
+    "function_call",
+    "message",
+    "task_complete",
+    "user_message",
+}
 
 ATTENTION_EVENT_TYPES = {
     "approval_request",
@@ -155,10 +164,12 @@ class UsageSnapshot:
     attention_at: float | None = None
     dizzy_at: float | None = None
     last_activity_at: float | None = None
+    msg: str | None = None
+    entries: list[str] = field(default_factory=list)
 
     def packet(self, state: str) -> dict[str, Any]:
         now = int(time.time())
-        return {
+        packet: dict[str, Any] = {
             "state": state,
             "tokens": self.tokens,
             "primary": self.primary,
@@ -167,6 +178,11 @@ class UsageSnapshot:
             "secondary_resets_at": roll_reset_at(self.secondary_resets_at, SECONDARY_RESET_WINDOW_SEC, now),
             "now": now,
         }
+        if self.msg:
+            packet["msg"] = self.msg
+        if self.entries:
+            packet["entries"] = self.entries
+        return packet
 
 
 def roll_reset_at(reset_at: int, window_sec: int, now: int) -> int:
@@ -741,6 +757,136 @@ def short_text(value: Any, fallback: str, limit: int) -> str:
     return text[: max(0, limit - 1)] + "..."
 
 
+def transcript_text(value: Any, limit: int) -> str:
+    text = " ".join(str(value or "").replace("\r", " ").replace("\n", " ").split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)] + "..."
+
+
+def content_blocks_text(content: Any, limit: int) -> str:
+    if isinstance(content, str):
+        return transcript_text(content, limit)
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for item in content:
+        if isinstance(item, dict):
+            if item.get("type") == "text" and item.get("text"):
+                parts.append(str(item.get("text")))
+            elif item.get("text"):
+                parts.append(str(item.get("text")))
+    return transcript_text(" ".join(parts), limit)
+
+
+def parse_tool_arguments(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str) or not raw.strip():
+        return {}
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def summarize_tool_call(name: Any, raw_arguments: Any) -> str:
+    tool = transcript_text(name or "tool", 28)
+    args = parse_tool_arguments(raw_arguments)
+    command = args.get("command")
+    if command:
+        return f"tool: {transcript_text(command, 62)}"
+    text = args.get("text") or args.get("prompt") or args.get("query")
+    if text:
+        return f"tool: {tool} {transcript_text(text, 42)}"
+    return f"tool: {transcript_text(tool, 62)}"
+
+
+def transcript_line_from_payload(payload: dict[str, Any]) -> str | None:
+    payload_type = str(payload.get("type") or "")
+    if payload_type not in TRANSCRIPT_EVENT_TYPES:
+        return None
+
+    if payload_type == "user_message":
+        text = transcript_text(payload.get("message"), 70)
+        return f"you: {text}" if text else None
+
+    if payload_type == "agent_message":
+        text = transcript_text(payload.get("message"), 70)
+        return f"codex: {text}" if text else None
+
+    if payload_type == "message":
+        role = str(payload.get("role") or "").lower()
+        text = content_blocks_text(payload.get("content"), 70)
+        if not text:
+            return None
+        if role == "user":
+            return f"you: {text}"
+        if role in {"assistant", "agent"}:
+            return f"codex: {text}"
+        return text
+
+    if payload_type in {"function_call", "custom_tool_call"}:
+        return summarize_tool_call(payload.get("name"), payload.get("arguments") or payload.get("input"))
+
+    if payload_type == "task_complete":
+        text = transcript_text(payload.get("last_agent_message"), 70)
+        return f"done: {text}" if text else "done"
+
+    return None
+
+
+def extract_transcript_entries(path: Path, max_bytes: int, max_entries: int) -> list[str]:
+    if max_entries <= 0 or not path.exists():
+        return []
+
+    entries: list[str] = []
+    for line in tail_lines(path, max_bytes):
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        payload = event.get("payload") if isinstance(event, dict) else None
+        if not isinstance(payload, dict):
+            continue
+        summary = transcript_line_from_payload(payload)
+        if not summary:
+            continue
+        if entries and entries[-1] == summary:
+            continue
+        entries.append(summary)
+
+    if len(entries) > max_entries:
+        entries = entries[-max_entries:]
+    return entries
+
+
+def attach_transcript(args: argparse.Namespace, snapshot: UsageSnapshot) -> UsageSnapshot:
+    if args.no_transcript:
+        return snapshot
+    source = snapshot.source if snapshot.source.exists() else None
+    if source is None:
+        try:
+            paths = latest_rollout_paths(args.codex_home, args.thread_id, 1)
+        except Exception:
+            paths = []
+        source = paths[0] if paths else None
+    if source is None:
+        return snapshot
+
+    entries = extract_transcript_entries(
+        source,
+        max(4096, int(args.transcript_tail_bytes)),
+        max(0, int(args.transcript_lines)),
+    )
+    if not entries:
+        return snapshot
+    return replace(snapshot, msg=entries[-1], entries=entries)
+
+
 class BleSession:
     def __init__(self, args: argparse.Namespace, client: BleakClient) -> None:
         self.args = args
@@ -1297,6 +1443,7 @@ async def send_usage_update(
     approvals: CodexApprovalProxy | None = None,
 ) -> None:
     snapshot = await asyncio.to_thread(read_usage, args)
+    snapshot = await asyncio.to_thread(attach_transcript, args, snapshot)
 
     state = choose_state(args, snapshot, tracker)
     if approvals and approvals.has_pending():
@@ -1378,6 +1525,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--thread-scan-limit", type=int, default=12)
     p.add_argument("--tail-bytes", type=int, default=8 * 1024 * 1024)
     p.add_argument("--limit-id", default="codex", help="Prefer this rate_limits.limit_id")
+    p.add_argument(
+        "--transcript-lines",
+        type=int,
+        default=6,
+        help="Recent Codex transcript summaries to include in BLE packets",
+    )
+    p.add_argument(
+        "--transcript-tail-bytes",
+        type=int,
+        default=256 * 1024,
+        help="Rollout JSONL tail size to scan for transcript summaries",
+    )
+    p.add_argument(
+        "--no-transcript",
+        action="store_true",
+        help="Do not include recent Codex transcript summaries in BLE packets",
+    )
     p.add_argument(
         "--no-appserver-usage",
         action="store_true",

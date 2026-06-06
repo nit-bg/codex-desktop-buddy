@@ -109,6 +109,23 @@ static void _applyPrompt(JsonVariant v, TamaState* out, bool clearIfNull) {
   }
 }
 
+static void _applyEntries(JsonVariant v, TamaState* out) {
+  JsonArray la = v.as<JsonArray>();
+  if (la.isNull()) return;
+
+  uint8_t n = 0;
+  for (JsonVariant entry : la) {
+    if (n >= 8) break;
+    const char* s = entry.as<const char*>();
+    strncpy(out->lines[n], s ? s : "", 91); out->lines[n][91]=0;
+    n++;
+  }
+  if (n != out->nLines || (n > 0 && strcmp(out->lines[n-1], out->msg) != 0)) {
+    out->lineGen++;
+  }
+  out->nLines = n;
+}
+
 static void _applyJson(const char* line, TamaState* out) {
   JsonDocument doc;
   if (deserializeJson(doc, line)) return;
@@ -161,6 +178,7 @@ static void _applyJson(const char* line, TamaState* out) {
     if (!m) m = "Codex usage live";
     strncpy(out->msg, m, sizeof(out->msg) - 1);
     out->msg[sizeof(out->msg) - 1] = 0;
+    _applyEntries(doc["entries"], out);
 
     out->lastUpdated = millis();
     _lastLiveMs = millis();
@@ -176,20 +194,7 @@ static void _applyJson(const char* line, TamaState* out) {
   out->tokensToday = doc["tokens_today"] | out->tokensToday;
   const char* m = doc["msg"];
   if (m) { strncpy(out->msg, m, sizeof(out->msg)-1); out->msg[sizeof(out->msg)-1]=0; }
-  JsonArray la = doc["entries"];
-  if (!la.isNull()) {
-    uint8_t n = 0;
-    for (JsonVariant v : la) {
-      if (n >= 8) break;
-      const char* s = v.as<const char*>();
-      strncpy(out->lines[n], s ? s : "", 91); out->lines[n][91]=0;
-      n++;
-    }
-    if (n != out->nLines || (n > 0 && strcmp(out->lines[n-1], out->msg) != 0)) {
-      out->lineGen++;
-    }
-    out->nLines = n;
-  }
+  _applyEntries(doc["entries"], out);
   _applyPrompt(doc["prompt"], out, true);
   out->lastUpdated = millis();
   _lastLiveMs = millis();
@@ -260,5 +265,6 @@ inline void dataPoll(TamaState* out) {
     out->recentlyCompleted=false; out->lastUpdated=now;
     strncpy(out->msg, "No Codex bridge", sizeof(out->msg)-1);
     out->msg[sizeof(out->msg)-1]=0;
+    if (out->nLines != 0) { out->nLines = 0; out->lineGen++; }
   }
 }

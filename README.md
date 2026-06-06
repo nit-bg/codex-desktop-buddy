@@ -7,6 +7,11 @@ The StickS3 shows Codex usage over BLE: a GIF pet, a 5-hour usage bar, a 7-day
 usage bar, reset countdowns, and live state changes such as `busy`, `idle`,
 `completed`, `attention`, `dizzy`, `heart`, and `sleep`.
 
+It also includes a Codex chat screen that shows the buddy GIF next to recent
+session message summaries from local Codex rollout logs. Press A to cycle from
+usage to chat to info; press B on the chat screen to scroll older lines. The
+usage and chat screens both react to side rotation.
+
 This project is a personal fork of Anthropic's
 [`claude-desktop-buddy`](https://github.com/anthropics/claude-desktop-buddy)
 reference firmware. The BLE display idea comes from that reference project,
@@ -25,6 +30,8 @@ usage bridge.
 - Primary usage window labeled `5h`.
 - Secondary usage window labeled `7d`.
 - Reset countdowns for both windows.
+- Codex chat screen with recent prompt, response, and tool summaries.
+- Portrait and landscape layouts for usage and chat.
 - Color-coded usage bars:
   - `0-34%`: blue
   - `35-69%`: green
@@ -116,8 +123,11 @@ Help me enable hooks and generate three corresponding hooks: SessionStart, UserP
 Codex should create the three hooks that start the BLE bridge.
 
 Windows compatibility note: current versions of this plugin include
-Windows-safe hook commands in `plugins/codex-usage-stick/hooks.json`; after
-updating the marketplace, restart Codex and reapprove hook trust.
+Windows-safe hook commands in `plugins/codex-usage-stick/hooks.json`. The
+Windows hook command locates the installed plugin cache and does not rely on
+`$PLUGIN_ROOT`, which may not expand for plugin-bundled hooks on Codex Desktop
+for Windows. After updating the marketplace, restart Codex and reapprove hook
+trust.
 
 CLI fallback:
 

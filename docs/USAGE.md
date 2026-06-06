@@ -203,13 +203,19 @@ The hook runs:
 plugins/codex-usage-stick/scripts/hook_entry.py
 ```
 
-Windows compatibility note: the hook invokes the same entry point with
-`python`. After updating hook commands, restart Codex and reapprove hook trust
-because the trusted hook hash changes.
+Windows compatibility note: the hook invokes the same entry point through a
+`py -3` cache bootstrap. It does not rely on `$PLUGIN_ROOT`, because Codex
+Desktop for Windows may not expand that placeholder for plugin-bundled hooks.
+After updating hook commands, restart Codex and reapprove hook trust because
+the trusted hook hash changes.
 
 It writes a diagnostic record and starts the local background BLE bridge. The
 bridge reads local Codex usage files and sends compact usage numbers to the
 StickS3 over BLE.
+
+The bridge also sends a small `entries` array with recent Codex session
+summaries from the local rollout log. The firmware displays those entries on
+the chat screen.
 
 ## 7. Trigger The Bridge
 
@@ -227,6 +233,12 @@ A successful automatic trigger includes:
 "event": "UserPromptSubmit"
 ```
 
+On Windows, a successful plugin-bundled hook also records:
+
+```text
+"hook_source": "plugin-windows-bootstrap"
+```
+
 Check the bridge log:
 
 ```bash
@@ -238,6 +250,11 @@ A successful BLE send includes:
 ```text
 sent {"state":"busy","tokens":...,"primary":...,"secondary":...}
 ```
+
+To view recent session messages on the StickS3, press A until the `CODEX CHAT`
+screen appears. The buddy GIF remains visible. Press B on that screen to scroll
+older lines. Turning the StickS3 on its side switches the chat screen to a
+landscape layout, matching the usage screen behavior.
 
 ## 8. Manual Bridge Commands
 
