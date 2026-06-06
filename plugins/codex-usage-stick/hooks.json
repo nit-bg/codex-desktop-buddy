@@ -2,11 +2,11 @@
   "hooks": {
     "SessionStart": [
       {
-        "matcher": null,
         "hooks": [
           {
             "type": "command",
             "command": "python \"$PLUGIN_ROOT/scripts/hook_entry.py\" --event SessionStart",
+            "commandWindows": "py -3 \"$PLUGIN_ROOT/scripts/hook_entry.py\" --event SessionStart",
             "timeout": 8,
             "statusMessage": "Starting Codex Usage Stick BLE bridge"
           }
@@ -15,11 +15,11 @@
     ],
     "UserPromptSubmit": [
       {
-        "matcher": null,
         "hooks": [
           {
             "type": "command",
             "command": "python \"$PLUGIN_ROOT/scripts/hook_entry.py\" --event UserPromptSubmit",
+            "commandWindows": "py -3 \"$PLUGIN_ROOT/scripts/hook_entry.py\" --event UserPromptSubmit",
             "timeout": 8,
             "statusMessage": "Starting Codex Usage Stick BLE bridge"
           }
@@ -28,11 +28,11 @@
     ],
     "PermissionRequest": [
       {
-        "matcher": null,
         "hooks": [
           {
             "type": "command",
             "command": "python \"$PLUGIN_ROOT/scripts/hook_entry.py\" --event PermissionRequest",
+            "commandWindows": "py -3 \"$PLUGIN_ROOT/scripts/hook_entry.py\" --event PermissionRequest",
             "timeout": 60,
             "statusMessage": "Waiting for StickS3 approval"
           }
