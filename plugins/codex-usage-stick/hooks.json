@@ -6,7 +6,7 @@
           {
             "type": "command",
             "command": "python \"$PLUGIN_ROOT/scripts/hook_entry.py\" --event SessionStart",
-            "commandWindows": "py -3 \"$PLUGIN_ROOT/scripts/hook_entry.py\" --event SessionStart",
+            "commandWindows": "py -3 -c \"from pathlib import Path; import os,runpy,sys; e='SessionStart'; r=Path.home()/'.codex'/'plugins'/'cache'; m=sorted(r.glob('*/codex-usage-stick/*/scripts/hook_entry.py'), key=lambda p: tuple(int(x) if x.isdigit() else 0 for x in p.parents[1].name.split('.')), reverse=True); assert m, 'Codex Usage Stick hook entry not found in plugin cache'; os.environ['CODEX_USAGE_STICK_HOOK_SOURCE']='plugin-windows-bootstrap'; sys.argv=[str(m[0]),'--event',e]; runpy.run_path(str(m[0]), run_name='__main__')\"",
             "timeout": 8,
             "statusMessage": "Starting Codex Usage Stick BLE bridge"
           }
@@ -19,7 +19,7 @@
           {
             "type": "command",
             "command": "python \"$PLUGIN_ROOT/scripts/hook_entry.py\" --event UserPromptSubmit",
-            "commandWindows": "py -3 \"$PLUGIN_ROOT/scripts/hook_entry.py\" --event UserPromptSubmit",
+            "commandWindows": "py -3 -c \"from pathlib import Path; import os,runpy,sys; e='UserPromptSubmit'; r=Path.home()/'.codex'/'plugins'/'cache'; m=sorted(r.glob('*/codex-usage-stick/*/scripts/hook_entry.py'), key=lambda p: tuple(int(x) if x.isdigit() else 0 for x in p.parents[1].name.split('.')), reverse=True); assert m, 'Codex Usage Stick hook entry not found in plugin cache'; os.environ['CODEX_USAGE_STICK_HOOK_SOURCE']='plugin-windows-bootstrap'; sys.argv=[str(m[0]),'--event',e]; runpy.run_path(str(m[0]), run_name='__main__')\"",
             "timeout": 8,
             "statusMessage": "Starting Codex Usage Stick BLE bridge"
           }
@@ -32,7 +32,7 @@
           {
             "type": "command",
             "command": "python \"$PLUGIN_ROOT/scripts/hook_entry.py\" --event PermissionRequest",
-            "commandWindows": "py -3 \"$PLUGIN_ROOT/scripts/hook_entry.py\" --event PermissionRequest",
+            "commandWindows": "py -3 -c \"from pathlib import Path; import os,runpy,sys; e='PermissionRequest'; r=Path.home()/'.codex'/'plugins'/'cache'; m=sorted(r.glob('*/codex-usage-stick/*/scripts/hook_entry.py'), key=lambda p: tuple(int(x) if x.isdigit() else 0 for x in p.parents[1].name.split('.')), reverse=True); assert m, 'Codex Usage Stick hook entry not found in plugin cache'; os.environ['CODEX_USAGE_STICK_HOOK_SOURCE']='plugin-windows-bootstrap'; sys.argv=[str(m[0]),'--event',e]; runpy.run_path(str(m[0]), run_name='__main__')\"",
             "timeout": 60,
             "statusMessage": "Waiting for StickS3 approval"
           }
