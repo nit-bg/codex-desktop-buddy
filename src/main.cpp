@@ -1932,13 +1932,14 @@ void loop() {
     else if (settingsOpen) drawSettings();
     else if (menuOpen) drawMenu();
 
-    bool usagePlain = displayMode == DISP_NORMAL
-                   && !tama.promptId[0]
-                   && !pk
-                   && !clocking
-                   && !resetOpen
-                   && !settingsOpen
-                   && !menuOpen;
+    bool stableScreen = !tama.promptId[0]
+                     && !pk
+                     && !clocking
+                     && !resetOpen
+                     && !settingsOpen
+                     && !menuOpen;
+    bool usagePlain = stableScreen && displayMode == DISP_NORMAL;
+    bool transcriptPlain = stableScreen && displayMode == DISP_TRANSCRIPT;
     if (usagePlain && !usageFullPushNeeded) {
       M5.Lcd.setClipRect(0, USAGE_PET_TOP, W, H - USAGE_PET_TOP);
       spr.pushSprite(0, 0);
@@ -1946,7 +1947,7 @@ void loop() {
     } else {
       spr.pushSprite(0, 0);
     }
-    usageFullPushNeeded = !usagePlain;
+    usageFullPushNeeded = !(usagePlain || transcriptPlain);
   }
 
   // Face-down nap: dim immediately, pause animations, accumulate sleep time.
